@@ -8,31 +8,37 @@ Tie::Dir - class definition for reading directories via a tied hash
 
 =head1 SYNOPSIS
 
-	tie %hash, Tie::Dir, ".";
-
-	new Tie::Dir \%hash, ".";
-
+	use Tie::Dir qw(DIR_UNLINK);
+	
+	# Both of these produce identical results
+	#(ie %hash is tied)
+	tie %hash, Tie::Dir, ".", DIR_UNLINK;
+	new Tie::Dir \%hash, ".", DIR_UNLINK;
+	
+	# This creates a reference to a hash, which is tied.
 	$hash = new Tie::Dir ".";
-
+	
+	# All these examples assume that %hash is tied (ie one of the
+	# first two tie methods was used
+	
 	# itterate through the directory
 	foreach $file ( keys %hash ) {
 		...
 	}
-
+	
 	# Set the access and modification times (touch :-)
 	$hash{SomeFile} = time;
-
+	
 	# Obtain stat information of a file
 	@stat = @{$hash{SomeFile}};
-
+	
 	# Check if entry exists
 	if(exists $hash{SomeFile}) {
 		...
 	}
-
-	# Delete an entry
+	
+	# Delete an entry, only if DIR_UNLINK specified
 	delete $hash{SomeFile};
-
 
 =head1 DESCRIPTION
 
@@ -51,11 +57,22 @@ and the second being the modification time.
 
 =over
 
-=item new [hashref,] dirname
+=item new [hashref,] dirname [, options]
 
 This method ties the hash referenced by C<hashref> to the directory C<dirname>.
 If C<hashref> is omitted then C<new> returns a reference to a hash which
 hash been tied, otherwise it returns the result of C<tie>
+
+The possible options are:
+
+=over
+
+=item DIR_UNLINK
+
+Delete operations on the hash will cause C<unlink> to be called on the
+corresponding file 
+
+=back
 
 =back
 
@@ -63,6 +80,7 @@ hash been tied, otherwise it returns the result of C<tie>
 
 Graham Barr <bodg@tiuk.ti.com>, from a quick hack posted by 
 Kenneth Albanowski <kjahds@kjahds.com>  to the perl5-porters mailing list
+based on a neat idea by Ilya Zakharevich.
 
 =cut
 
@@ -70,16 +88,20 @@ use Symbol;
 use Carp;
 use Tie::Hash;
 use strict;
-use vars qw(@ISA $VERSION);
+use vars qw(@ISA $VERSION @EXPORT_OK);
+require Exporter;
 
-@ISA = qw(Tie::Hash);
-$VERSION = "1.00";
+@ISA = qw(Tie::Hash Exporter);
+$VERSION = sprintf("%d.%02d", q$Revision: 1.2 $ =~ /(\d+)\.(\d+)/);
+@EXPORT_OK = qw(DIR_UNLINK);
+
+sub DIR_UNLINK { 1 }
 
 sub new {
     my $pkg = shift;
     my $h;
 
-    if(@_ && ref($_[0]) {
+    if(@_ && ref($_[0])) {
 	$h = shift;
 	return tie %$h, $pkg, @_;
     }
@@ -90,18 +112,21 @@ sub new {
 }
 
 sub TIEHASH {
-    my($class,$dir) = @_;
-    bless [$dir,undef], $class;
+    my($class,$dir,$unlink) = @_;
+    $unlink ||= 0;
+    bless [$dir,undef,$unlink], $class;
 }
 
 sub FIRSTKEY {
     my($this) = @_;
     if($this->[1]) {
-	rewinddir($this->[1]);
+	eval { rewinddir($this->[1]) } or
+	    opendir($this->[1],$this->[0]) or
+	    croak "Can't read ".$this->[0].": $!";
     }
     else {
 	$this->[1] =  gensym();
-	opendir($this->[1],$this->[0]) ||
+	opendir($this->[1],$this->[0]) or
 		croak "Can't read ".$this->[0].": $!";
     }
     readdir($this->[1]);
@@ -136,7 +161,9 @@ sub STORE {
 
 sub DELETE {
     my($this,$key) = @_;
-    unlink($this->[0] . "/" . $key);
+    # Only unlink if unlink-ing is enabled
+    unlink($this->[0] . "/" . $key)
+	if($this->[2] & DIR_UNLINK);
 }
 
 1;
